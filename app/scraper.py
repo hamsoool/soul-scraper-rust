@@ -86,49 +86,52 @@ def parse_date_from_text(text: str, fallback_date: datetime = None) -> datetime:
 
 def parse_date_from_pdf_url(url: str) -> Optional[datetime]:
     """
-    Extracts the start date encoded in a DOE pump price PDF URL filename.
+    Extracts the start date from a DOE pump price PDF URL filename.
 
-    The DOE encodes dates directly into PDF filenames, which is far more
-    reliable than parsing link text (which is often just a region label).
+    Strategy: anchor on the 4-digit year (most reliable), then find the month
+    abbreviation appearing before it, then extract the first day number.
+    This handles all known DOE naming patterns including cross-month ranges:
 
-    Handles patterns like:
-      - nluz_regiii_jun-16-22_2026-pdf   → June 16, 2026
-      - nluz_regi_dec-10-16_2024-pdf     → December 10, 2024
-      - ncr-price-monitoring-for-june-2-8-2026-pdf-1 → June 2, 2026
+      lf-price-monitoring-for-june-16-22-2026-pdf  → June 16, 2026
+      lf-price-monitoring-for-may-26-june-1-2026-pdf → May 26, 2026  (cross-month: use first month)
+      lf-price-monitoring-for-dec-10-16-2024-pdf   → December 10, 2024
+      nluz_regiii_dec-10-16_2024-pdf               → December 10, 2024
+
+    Returns None if year or month cannot be found — caller should REJECT the doc.
     """
     try:
-        # Extract the filename from the full URL path
+        # Isolate filename and normalise
         filename = url.rstrip("/").split("/")[-1].lower()
-        # Strip trailing -pdf or -pdf1, -pdf2 suffixes
+        # Strip trailing -pdf, -pdf1, -pdf2 … suffixes
         filename = re.sub(r"-pdf\d*$", "", filename)
 
-        # Pattern A: month_abbrev-day-day_year  (North Luzon style)
-        # e.g. jun-16-22_2026, dec-10-16_2024, may-26-june-1_2026
-        m = re.search(
-            r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
-            r"[-_](\d{1,2})[-_]\d{1,2}[-_](\d{4})",
-            filename,
-        )
-        if m:
-            month = MONTH_ABBREVS.get(m.group(1)[:3], 0)
-            day = int(m.group(2))
-            year = int(m.group(3))
-            if month:
-                return datetime(year, month, day, tzinfo=timezone.utc)
+        # Step 1: find the 4-digit year (always appears near the end)
+        year_m = re.search(r'(?<!\d)(20\d{2})(?!\d)', filename)
+        if not year_m:
+            return None
+        year = int(year_m.group(1))
 
-        # Pattern B: for-month-day-day-year  (NCR / other monitoring style)
-        # e.g. for-june-2-8-2026, for-june-16-22-2026
-        m = re.search(
-            r"for[-_](jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*"
-            r"[-_](\d{1,2})[-_]\d{1,2}[-_](\d{4})",
-            filename,
-        )
-        if m:
-            month = MONTH_ABBREVS.get(m.group(1)[:3], 0)
-            day = int(m.group(2))
-            year = int(m.group(3))
-            if month:
-                return datetime(year, month, day, tzinfo=timezone.utc)
+        # Step 2: find ALL month abbreviations that appear BEFORE the year
+        before_year = filename[:year_m.start()]
+        month_hits = list(re.finditer(
+            r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*',
+            before_year
+        ))
+        if not month_hits:
+            return None
+
+        # Use the FIRST month (start of the date range)
+        first_hit = month_hits[0]
+        month = MONTH_ABBREVS.get(first_hit.group(1)[:3], 0)
+        if not month:
+            return None
+
+        # Step 3: find the first day number that appears after the month
+        after_first_month = before_year[first_hit.end():]
+        day_m = re.search(r'[-_](\d{1,2})(?=[-_]|$)', after_first_month)
+        day = int(day_m.group(1)) if day_m else 1
+
+        return datetime(year, month, day, tzinfo=timezone.utc)
 
     except Exception:
         pass
@@ -449,25 +452,24 @@ async def scrape_source_page(client: httpx.AsyncClient, source_url: str, categor
                         logger.info(f"Filtering out '{doc_title}' published at {published_dt} (older than 2 weeks)")
                         continue
                 elif category == "North Luzon Pump Prices":
-                    # Try URL-based date first (most accurate)
+                    # Always use the URL-extracted date — it's the most reliable signal.
+                    # Do NOT fall back to link-text date: the parent article's datePublished
+                    # is always the page's last-updated date (June 2026), so ALL historical
+                    # PDFs linked on that page would pass a link-text-based filter.
                     url_date = parse_date_from_pdf_url(pdf_url)
-                    if url_date:
-                        if url_date.year != now.year or url_date.month != now.month:
-                            logger.info(
-                                f"Filtering out '{doc_title}' — PDF date {url_date.date()} "
-                                f"not in current month ({now.year}-{now.month:02d})"
-                            )
-                            continue
-                        # Use the URL-extracted date as the canonical published date
-                        published_dt = url_date
-                    else:
-                        # Fallback: link-text date (may be imprecise)
-                        if published_dt.year != now.year or published_dt.month != now.month:
-                            logger.info(
-                                f"Filtering out '{doc_title}' published at {published_dt} "
-                                f"(outside current month/year {now.year}-{now.month})"
-                            )
-                            continue
+                    if not url_date:
+                        logger.info(
+                            f"Skipping '{doc_title}': cannot parse date from URL '{pdf_url}'"
+                        )
+                        continue
+                    if url_date.year != now.year or url_date.month != now.month:
+                        logger.info(
+                            f"Filtering out '{doc_title}' — PDF date {url_date.date()} "
+                            f"is not in {now.year}-{now.month:02d}"
+                        )
+                        continue
+                    # Use the URL-extracted date as the canonical published date
+                    published_dt = url_date
                 
                 records.append({
                     "source_category": category,

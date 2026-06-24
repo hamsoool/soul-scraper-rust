@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Query, status
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -57,6 +58,15 @@ app = FastAPI(
     description="A highly optimized API to fetch, scrape, and aggregate DOE price adjustments and NCR pump price PDFs.",
     version="1.0.0",
     lifespan=lifespan
+)
+
+# Enable CORS for cross-origin frontend queries
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.get("/health", tags=["System"])

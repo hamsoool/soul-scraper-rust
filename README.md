@@ -125,3 +125,16 @@ This service is configured for direct deployment on Render. Since you are using 
    - `SYNC_INTERVAL_HOURS` = `24`
 4. Deploy the service.
 5. *(Optional)* Create a Render **Cron Job** with schedule `0 0 * * *` and command `curl -X POST https://your-service-name.onrender.com/sync` to ensure the server automatically wakes up and syncs every 24 hours.
+
+---
+
+## Disclaimer
+
+This project is an independent data aggregation tool and is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Department of Energy (DOE) of the Philippines or any of its agencies. 
+
+All retrieved data, documents, and prices are public records sourced directly from the official DOE portal and are subject to the original publisher's terms.
+
+## License
+
+This project is open-source software licensed under the [MIT License](LICENSE).
+

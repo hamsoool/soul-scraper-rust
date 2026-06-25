@@ -176,3 +176,6 @@ Thumbs.db
 
 # Local environment configuration
 .env
+
+# Windows PDFium binary dependency
+/pdfium.dll

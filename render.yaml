@@ -7,7 +7,7 @@ services:
     plan: free
     envVars:
       - key: DATABASE_URL
-        sync: false # Put your Supabase transaction connection string here
+        sync: false # Put your Supabase connection string here
       - key: SYNC_INTERVAL_HOURS
         value: 24
       - key: HTTP_TIMEOUT_SECONDS
@@ -17,16 +17,4 @@ services:
       - key: PORT
         value: 8000
       - key: ENABLE_SCRAPER_SCHEDULER
-        value: "false" # Disable internal scheduler when using Render Cron to avoid overlaps
-
-  # Cron Service to run the sync binary directly
-  - type: cron
-    name: soul-scrape-sync-cron
-    env: docker
-    dockerfilePath: Dockerfile
-    schedule: "0 0 * * *" # Runs daily at midnight UTC
-    startCommand: "sync" # Executes the CLI sync binary in /usr/local/bin/sync
-    plan: free
-    envVars:
-      - key: DATABASE_URL
-        sync: false # Put your Supabase transaction connection string here
+        value: "false" # Set to true if you want the app to periodically poll when awake, or false to rely purely on POST /sync

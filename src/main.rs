@@ -80,6 +80,18 @@ async fn main() -> anyhow::Result<()> {
         .allow_headers(Any);
 
     let app = Router::new()
+        // Welcome/Index
+        .route("/", get(|| async {
+            axum::Json(serde_json::json!({
+                "message": "Welcome to Soul Scraper API!",
+                "endpoints": {
+                    "health": "/health",
+                    "stats": "/stats",
+                    "documents": "/documents",
+                    "latest": "/latest"
+                }
+            }))
+        }))
         // System endpoints
         .route("/health", get(system::health))
         .route("/stats", get(system::get_stats))

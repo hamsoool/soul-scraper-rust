@@ -1,15 +1,13 @@
 services:
-  # Web Service running FastAPI application
+  # Web Service running Rust Axum application
   - type: web
-    name: doe-pdf-aggregator
+    name: soul-scrape-rust
     env: docker
     dockerfilePath: Dockerfile
     plan: free
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: doe-scraper-db
-          property: connectionString
+        sync: false # Put your Supabase transaction connection string here
       - key: SYNC_INTERVAL_HOURS
         value: 24
       - key: HTTP_TIMEOUT_SECONDS
@@ -18,20 +16,17 @@ services:
         value: 10485760 # 10MB
       - key: PORT
         value: 8000
+      - key: ENABLE_SCRAPER_SCHEDULER
+        value: "false" # Disable internal scheduler when using Render Cron to avoid overlaps
 
-  # Option: Render Cron Job to trigger sync via endpoint
-  # Note: A free-tier web service can spin down when idle.
-  # Triggering /sync via Cron ensures the service wakes up and runs sync every 24 hours.
+  # Cron Service to run the sync binary directly
   - type: cron
-    name: doe-pdf-aggregator-cron
+    name: soul-scrape-sync-cron
     env: docker
     dockerfilePath: Dockerfile
     schedule: "0 0 * * *" # Runs daily at midnight UTC
-    buildCommand: "pip install httpx"
-    # Calls the main web service URL to trigger the background sync task
-    startCommand: "curl -X POST https://doe-pdf-aggregator.onrender.com/sync"
+    startCommand: "sync" # Executes the CLI sync binary in /usr/local/bin/sync
     plan: free
-
-databases:
-  - name: doe-scraper-db
-    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Put your Supabase transaction connection string here

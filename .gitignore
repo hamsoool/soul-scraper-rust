@@ -170,3 +170,9 @@ Thumbs.db
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Rust build artifacts
+/target/
+
+# Local environment configuration
+.env

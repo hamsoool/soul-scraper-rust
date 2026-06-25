@@ -3,13 +3,14 @@ import re
 import json
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Set
 import calendar
 
 import httpx
 from bs4 import BeautifulSoup
 import fitz  # PyMuPDF
 from sqlalchemy.future import select
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from urllib.parse import urljoin, urlparse
 
@@ -481,6 +482,78 @@ async def scrape_source_page(client: httpx.AsyncClient, source_url: str, categor
                 
     return records
 
+async def cleanup_outdated_records(db_session: AsyncSession) -> dict:
+    """
+    Cleans up the documents table by:
+    1. Deleting records whose published_date is older than 2 months.
+    2. Deleting duplicate records that share the same PDF filename,
+       keeping only the most recently created one per filename.
+
+    Returns a summary dict with counts of removed records.
+    """
+    now = datetime.now(timezone.utc)
+    two_months_ago = now - timedelta(days=60)
+    outdated_deleted = 0
+    duplicate_deleted = 0
+
+    # --- 1. Delete outdated records (published_date older than 2 months) ---
+    try:
+        outdated_stmt = (
+            delete(Document)
+            .where(Document.published_date < two_months_ago)
+            .where(Document.published_date.is_not(None))
+        )
+        result = await db_session.execute(outdated_stmt)
+        outdated_deleted = result.rowcount
+        if outdated_deleted:
+            logger.info(f"Cleanup: Deleted {outdated_deleted} outdated record(s) older than {two_months_ago.date()}.")
+    except Exception as e:
+        logger.error(f"Cleanup: Error deleting outdated records: {e}")
+
+    # --- 2. Delete duplicate records sharing the same PDF filename ---
+    # Fetch all documents ordered newest-first so we can keep the first seen per filename.
+    try:
+        all_docs_stmt = select(Document.id, Document.pdf_url).order_by(Document.created_at.desc())
+        all_docs_result = await db_session.execute(all_docs_stmt)
+        rows = all_docs_result.all()  # list of (id, pdf_url) tuples
+
+        seen_filenames: Set[str] = set()
+        duplicate_ids: List[int] = []
+
+        for doc_id, pdf_url in rows:
+            # Extract just the filename portion of the URL
+            filename = pdf_url.rstrip("/").split("/")[-1].lower() if pdf_url else ""
+            if not filename:
+                continue
+            if filename in seen_filenames:
+                duplicate_ids.append(doc_id)
+            else:
+                seen_filenames.add(filename)
+
+        if duplicate_ids:
+            dup_stmt = delete(Document).where(Document.id.in_(duplicate_ids))
+            dup_result = await db_session.execute(dup_stmt)
+            duplicate_deleted = dup_result.rowcount
+            logger.info(f"Cleanup: Deleted {duplicate_deleted} duplicate record(s) by filename.")
+    except Exception as e:
+        logger.error(f"Cleanup: Error deleting duplicate records: {e}")
+
+    # Commit cleanup changes
+    if outdated_deleted or duplicate_deleted:
+        try:
+            await db_session.commit()
+            logger.info(f"Cleanup committed: {outdated_deleted} outdated, {duplicate_deleted} duplicates removed.")
+        except Exception as e:
+            await db_session.rollback()
+            logger.error(f"Cleanup: Failed to commit deletions: {e}")
+
+    return {
+        "outdated_deleted": outdated_deleted,
+        "duplicate_deleted": duplicate_deleted,
+        "cutoff_date": two_months_ago.isoformat()
+    }
+
+
 async def sync_doe_data(db_session: AsyncSession) -> dict:
     """
     Core sync execution orchestrator:
@@ -494,7 +567,11 @@ async def sync_doe_data(db_session: AsyncSession) -> dict:
     start_time = datetime.now(timezone.utc)
     processed_count = 0
     errors = []
-    
+
+    # Run cleanup before scraping new data
+    cleanup_summary = await cleanup_outdated_records(db_session)
+    logger.info(f"Pre-sync cleanup: {cleanup_summary}")
+
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     
     async with httpx.AsyncClient(timeout=settings.HTTP_TIMEOUT_SECONDS, follow_redirects=True) as client:
@@ -575,5 +652,6 @@ async def sync_doe_data(db_session: AsyncSession) -> dict:
         "status": "success" if not errors else "partial_success",
         "processed_count": processed_count,
         "duration_seconds": duration,
-        "errors": errors
+        "errors": errors,
+        "cleanup": cleanup_summary
     }

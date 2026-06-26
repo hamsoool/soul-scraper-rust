@@ -1,10 +1,17 @@
 use std::net::{IpAddr, ToSocketAddrs};
+use std::sync::OnceLock;
 use url::Url;
 
 use crate::error::{AppError, Result};
 
-/// Domains that are permitted as scrape / download targets.
-const ALLOWED_DOMAINS: &[&str] = &["doe.gov.ph", "www.doe.gov.ph", "prod-cms.doe.gov.ph"];
+/// The allowlist set at startup from the scrape config.
+static ALLOWED_DOMAINS: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Initializes the allowed-domains list from the scrape config.
+/// Must be called once before `validate_url` is used.
+pub fn init_allowed_domains(domains: Vec<String>) {
+    ALLOWED_DOMAINS.set(domains).ok();
+}
 
 /// Returns `true` for loopback, private, link-local, multicast, or reserved IPs.
 fn is_internal_ip(ip: IpAddr) -> bool {
@@ -28,7 +35,7 @@ fn is_internal_ip(ip: IpAddr) -> bool {
 
 /// Validates that:
 /// 1. `url` uses the HTTPS scheme.
-/// 2. Its hostname is in `ALLOWED_DOMAINS`.
+/// 2. Its hostname is in the allowed-domains list (populated at startup).
 /// 3. The hostname resolves to a public (non-internal) IP (SSRF prevention).
 ///
 /// Uses synchronous DNS via `std::net::ToSocketAddrs` to avoid an extra async
@@ -55,7 +62,11 @@ pub fn validate_url(url_str: &str) -> Result<()> {
         .ok_or_else(|| AppError::SecurityBlocked("No hostname in URL".to_string()))?
         .to_lowercase();
 
-    if !ALLOWED_DOMAINS.contains(&host.as_str()) {
+    let allowed = ALLOWED_DOMAINS.get().ok_or_else(|| {
+        AppError::SecurityBlocked("Allowed domains not initialized".to_string())
+    })?;
+
+    if !allowed.contains(&host) {
         return Err(AppError::SecurityBlocked(format!(
             "Domain '{host}' is not in the allowed list"
         )));
@@ -78,5 +89,3 @@ pub fn validate_url(url_str: &str) -> Result<()> {
 
     Ok(())
 }
-
-

@@ -135,12 +135,16 @@ pub async fn get_document_by_id(pool: &PgPool, id: i32) -> Result<Document> {
     row.as_ref().map(map_document).ok_or(AppError::NotFound)
 }
 
-/// Returns the latest document per category.
+/// Returns the latest document per category (dynamically from DB).
 pub async fn get_latest_per_category(pool: &PgPool) -> Result<Vec<DocumentListItem>> {
-    let categories = ["Price Adjustments", "North Luzon Pump Prices"];
-    let mut results = Vec::new();
+    let cat_rows: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT source_category FROM documents ORDER BY source_category",
+    )
+    .fetch_all(pool)
+    .await?;
 
-    for cat in &categories {
+    let mut results = Vec::new();
+    for cat in &cat_rows {
         let row = sqlx::query(
             r#"
             SELECT id, source_category, title, source_url, pdf_url,
@@ -163,22 +167,23 @@ pub async fn get_latest_per_category(pool: &PgPool) -> Result<Vec<DocumentListIt
     Ok(results)
 }
 
-/// Returns total document count and per-category counts.
+/// Returns total document count and per-category counts (dynamically from DB).
 pub async fn get_counts(pool: &PgPool) -> Result<(i64, std::collections::HashMap<String, i64>)> {
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
         .fetch_one(pool)
         .await?;
 
-    let categories = ["Price Adjustments", "North Luzon Pump Prices"];
+    let rows = sqlx::query(
+        "SELECT source_category, COUNT(*) as count FROM documents GROUP BY source_category",
+    )
+    .fetch_all(pool)
+    .await?;
+
     let mut by_cat = std::collections::HashMap::new();
-    for cat in &categories {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM documents WHERE source_category = $1",
-        )
-        .bind(cat)
-        .fetch_one(pool)
-        .await?;
-        by_cat.insert(cat.to_string(), count);
+    for row in &rows {
+        let cat: String = row.get("source_category");
+        let count: i64 = row.get("count");
+        by_cat.insert(cat, count);
     }
 
     Ok((total, by_cat))

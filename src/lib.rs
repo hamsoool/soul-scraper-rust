@@ -14,4 +14,5 @@ pub struct AppState {
     pub pool: sqlx::PgPool,
     pub sync_state: scheduler::SharedSyncState,
     pub settings: Arc<config::Settings>,
+    pub scrape_config: config::ScrapeConfig,
 }

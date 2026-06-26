@@ -1,39 +1,84 @@
-# Soul Scraper — DOE Philippines Fuel Price API (Rust Edition)
+# Soul Scraper — Configurable Website Aggregator API (Rust Edition)
 
-A high-performance REST API that automatically monitors, scrapes, and aggregates fuel price PDFs from the [Department of Energy Philippines](https://doe.gov.ph) website. 
+A high-performance REST API that scrapes, downloads, and aggregates files (PDFs, images, etc.) from any Nuxt.js-based CMS website.
 
-Rebuilt from Python/FastAPI to **Rust/Axum** for extreme raw throughput, concurrent PDF downloads using Tokio's `FuturesUnordered`, and zero garbage collection overhead.
-
-**Base URL:** `https://soul-scrape-rust.onrender.com`
-
-> ⚠️ Free-tier Render service — may take 30–60 seconds to wake up after inactivity.
+Built with **Rust/Axum** for extreme throughput — all file downloads run concurrently via Tokio's `FuturesUnordered` with zero GC overhead.
 
 ---
 
-## Data Sources
+## Configuration (`sources.json`)
 
-The API aggregates PDFs from two DOE page categories:
+All scrape targets are defined in a single JSON file at the project root. Copy the example to get started:
 
-| Category | Source |
+```bash
+cp sources.example.json sources.json
+```
+
+Then edit `sources.json` to point at your target:
+
+```json
+{
+  "target_url": "https://example.gov.ph",
+  "aggregators": [
+    {
+      "url": "https://example.gov.ph/articles/category-1",
+      "category": "Category 1",
+      "file_types": ["pdf"]
+    },
+    {
+      "url": "https://example.gov.ph/articles/category-2",
+      "category": "Category 2",
+      "file_types": ["pdf", "jpg", "png"]
+    }
+  ]
+}
+```
+
+| Field | Description |
 | :--- | :--- |
-| **Price Adjustments** | Retail pump price adjustment bulletins (past 14 days) |
-| **North Luzon Pump Prices** | Weekly North Luzon regional price monitoring (current month) |
+| `target_url` | Base URL of the target website (used to resolve relative links) |
+| `aggregators[].url` | Specific Nuxt.js page to scrape for file links |
+| `aggregators[].category` | Label assigned to files found on this page |
+| `aggregators[].file_types` | File extensions to look for (e.g. `pdf`, `jpg`, `png`, `xlsx`) |
+
+> `sources.json` is git-ignored — each machine has its own config. Use `sources.example.json` as a reference.
+
+Set a custom path with the `SOURCES_CONFIG_PATH` env var (default: `sources.json`).
 
 ---
 
 ## API Endpoints
 
 ### `GET /`
-Index welcome page showing service metadata and available endpoints.
+Index welcome page showing available endpoints.
 
 ---
 
 ### `GET /health`
-Simple health check to confirm the API and database are online.
+Simple health check.
 
 **Response:**
 ```json
 { "status": "ok" }
+```
+
+---
+
+### `GET /categories`
+Returns the full scrape configuration (target URL + all aggregators).
+
+**Response:**
+```json
+{
+  "target_url": "https://example.gov.ph",
+  "aggregators": [
+    {
+      "url": "https://example.gov.ph/articles/category-1",
+      "category": "Category 1",
+      "file_types": ["pdf"]
+    }
+  ]
+}
 ```
 
 ---
@@ -47,11 +92,11 @@ Returns a paginated list of aggregated documents, sorted by most recent first.
 | :--- | :--- | :--- | :--- |
 | `limit` | integer | `20` | Number of results (max: 100) |
 | `offset` | integer | `0` | Pagination offset |
-| `category` | string | — | Filter by `Price Adjustments` or `North Luzon Pump Prices` |
+| `category` | string | — | Filter by any configured category |
 
 **Example:**
 ```
-GET /documents?category=Price Adjustments&limit=5
+GET /documents?category=Category%201&limit=5
 ```
 
 **Response:**
@@ -59,10 +104,10 @@ GET /documents?category=Price Adjustments&limit=5
 [
   {
     "id": 42,
-    "source_category": "Price Adjustments",
-    "title": "Price Adjustment Effective June 24, 2026",
-    "source_url": "https://doe.gov.ph/articles/...",
-    "pdf_url": "https://prod-cms.doe.gov.ph/documents/...",
+    "source_category": "Category 1",
+    "title": "Example Document",
+    "source_url": "https://example.gov.ph/articles/...",
+    "pdf_url": "https://cms.example.gov.ph/documents/...",
     "published_date": "2026-06-24T00:00:00Z",
     "created_at": "2026-06-25T00:03:12Z",
     "updated_at": "2026-06-25T00:03:12Z"
@@ -73,7 +118,7 @@ GET /documents?category=Price Adjustments&limit=5
 ---
 
 ### `GET /documents/:id`
-Returns full details of a specific document, including its extracted PDF text content.
+Returns full details of a specific document, including extracted text content (PDF only).
 
 **Example:**
 ```
@@ -84,35 +129,29 @@ GET /documents/42
 ```json
 {
   "id": 42,
-  "source_category": "Price Adjustments",
-  "title": "Price Adjustment Effective June 24, 2026",
-  "source_url": "https://doe.gov.ph/articles/...",
-  "pdf_url": "https://prod-cms.doe.gov.ph/documents/...",
+  "source_category": "Category 1",
+  "title": "Example Document",
+  "source_url": "https://example.gov.ph/articles/...",
+  "pdf_url": "https://cms.example.gov.ph/documents/...",
   "published_date": "2026-06-24T00:00:00Z",
   "created_at": "2026-06-25T00:03:12Z",
   "updated_at": "2026-06-25T00:03:12Z",
-  "content": "Effectivity: June 24, 2026\nGasoline: -0.40/liter\nDiesel: -0.25/liter..."
+  "content": "Extracted PDF text content..."
 }
 ```
 
 ---
 
 ### `GET /latest`
-Returns the single most recent document for each category.
+Returns the single most recent document for **each** category found in the database.
 
 **Response:**
 ```json
 [
   {
     "id": 42,
-    "source_category": "Price Adjustments",
-    "title": "Price Adjustment Effective June 24, 2026",
-    ...
-  },
-  {
-    "id": 38,
-    "source_category": "North Luzon Pump Prices",
-    "title": "List of North Luzon Pump Prices - CAR",
+    "source_category": "Category 1",
+    "title": "Example Document",
     ...
   }
 ]
@@ -128,13 +167,15 @@ Returns database statistics and scraper status.
 {
   "total_documents": 24,
   "documents_by_category": {
-    "Price Adjustments": 14,
-    "North Luzon Pump Prices": 10
+    "Category 1": 14,
+    "Category 2": 10
   },
   "last_sync_time": "2026-06-25T00:03:45Z",
   "system_status": "idle"
 }
 ```
+
+`documents_by_category` auto-populates from all categories in the database.
 
 ---
 
@@ -155,29 +196,30 @@ Triggers a manual scrape in the background. Returns immediately with `202 Accept
 
 ## Architecture
 
-This API uses a **hybrid modular architecture** to avoid cloud provider IP blocks from the DOE portal. You can run the sync CLI locally to load data directly into Supabase:
+The API uses a **hybrid modular architecture** — the sync CLI runs on your local machine (avoids cloud IP blocks), writes to a shared database, and the API server reads from it.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │             Local Machine (Windows/Linux Sync CLI)          │
 │               - Executes `cargo run --bin sync`             │
-│               - Scrapes DOE portal using local IP           │
-│               - Parallelizes PDF downloads (Tokio)          │
+│               - Reads targets from sources.json             │
+│               - Scrapes configured Nuxt.js pages            │
+│               - Parallelizes file downloads (Tokio)         │
 └──────────────┬──────────────────────────────────────────────┘
                │
                │ Writes data directly
                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                 Supabase PostgreSQL Database                │
-│            - Remote shared database cluster                 │
+│                 PostgreSQL Database (Supabase/Render)       │
+│            - Shared single-connection point                 │
 └──────────────▲──────────────────────────────────────────────┘
                │
                │ Reads data for API clients
                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                 Render Hosted API Web Service               │
+│                 Hosted API Web Service (Render/Docker)      │
 │               - Dockerized Axum HTTP server                 │
-│               - Hosts GET /documents, /latest, etc.         │
+│               - Serves GET /documents, /latest, etc.        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -196,19 +238,29 @@ Make sure you have the [Rust toolchain installed](https://rustup.rs/).
 
 ### 2. Configure Environment
 
-Copy the example env file and add your Supabase database URL:
+Copy the example env file and add your database URL:
 
 ```bash
 copy .env.example .env
 ```
 
 ```env
-DATABASE_URL=postgresql://postgres.[YOUR_PROJECT_ID]:[PASSWORD]@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
+DATABASE_URL=postgresql://postgres:[PASSWORD]@localhost:5432/scraper
 ```
 
-### 3. Install PDFium Binary (Windows Local Requirement)
+### 3. Configure Scrape Targets
 
-To run the scraper locally on Windows, download the PDFium dynamic library (`pdfium.dll`) using this PowerShell command:
+Copy the example config and edit it:
+
+```bash
+copy sources.example.json sources.json
+```
+
+Then edit `sources.json` with your target website, categories, and file types. See the [Configuration](#configuration-sourcesjson) section above for the format.
+
+> Allowed domains are **automatically extracted** from the URLs you configure. No separate allowlist needed.
+
+### 4. Install PDFium Binary (Windows — for PDF text extraction)
 
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-win-x64.zip" -OutFile "pdfium.zip"
@@ -217,7 +269,7 @@ Copy-Item -Path "pdfium-temp\bin\pdfium.dll" -Destination "pdfium.dll"
 Remove-Item -Path "pdfium.zip", "pdfium-temp" -Recurse -Force
 ```
 
-### 4. Run the API Server
+### 5. Run the API Server
 
 ```bash
 cargo run
@@ -225,9 +277,7 @@ cargo run
 
 The server will listen on `http://127.0.0.1:8000/`.
 
-### 5. Run a Local Sync CLI
-
-To manually trigger a local sync using your machine's IP address:
+### 6. Run a Local Sync CLI
 
 ```bash
 cargo run --bin sync
@@ -246,21 +296,18 @@ cargo run --bin sync
 | HTTP Client | **reqwest** (gzip/brotli streaming client) |
 | HTML Parsing | **scraper** crate (CSS selection engine) |
 | PDF Extraction | **pdfium-render** (Google PDFium C++ bindings) |
+| Configuration | **JSON** file (`sources.json`), reloaded on restart |
 | Containerization | **Docker** (Multi-stage build using `rust:slim` -> `debian:slim`) |
 
 ---
 
 ## Security & Reliability
 
-- **SSRF Prevention**: All URLs are strictly validated and DNS-resolved. Local loopback / private IPs are blocked, ensuring only valid public DOE IPs are accessed.
-- **Buffer Safety**: PDF downloads are streamed and aborted immediately if they exceed 10 MB.
+- **SSRF Prevention**: All URLs are strictly validated and DNS-resolved. Local loopback / private IPs are blocked. The allowlist is automatically populated from `sources.json` at startup.
+- **Buffer Safety**: File downloads are streamed and aborted immediately if they exceed 10 MB.
 - **Resource Offloading**: Heavy, CPU-bound PDF text extraction is safely spawned inside Tokio's `spawn_blocking` threadpool to ensure the main server event loop is never blocked.
 
 ---
-
-## Disclaimer
-
-This is an independent data aggregation tool and is not affiliated with, endorsed by, or officially connected to the Department of Energy (DOE) of the Philippines.
 
 ## License
 

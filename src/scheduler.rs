@@ -6,7 +6,10 @@ use tokio::time::{interval, Duration};
 use tracing::{info, warn};
 
 
-use crate::{config::Settings, scraper::sync_doe_data};
+use crate::{
+    config::{self, Settings},
+    scraper::sync_doe_data,
+};
 
 /// Shared sync state accessible by routes and the background scheduler.
 #[derive(Debug, Default, Clone)]
@@ -24,7 +27,12 @@ pub fn new_state() -> SharedSyncState {
 }
 
 /// Runs one sync cycle if not already running.
-pub async fn run_sync_once(pool: PgPool, state: SharedSyncState, settings: Arc<Settings>) {
+pub async fn run_sync_once(
+    pool: PgPool,
+    state: SharedSyncState,
+    settings: Arc<Settings>,
+    scrape_config: config::ScrapeConfig,
+) {
     {
         let mut s = state.lock().unwrap();
         if s.is_syncing {
@@ -35,7 +43,7 @@ pub async fn run_sync_once(pool: PgPool, state: SharedSyncState, settings: Arc<S
     }
 
     info!("Background sync job started.");
-    let result = sync_doe_data(&pool, &settings).await;
+    let result = sync_doe_data(&pool, &settings, &scrape_config).await;
     let now = Utc::now();
 
     let mut s = state.lock().unwrap();
@@ -51,6 +59,7 @@ pub fn start_scheduler(
     pool: PgPool,
     state: SharedSyncState,
     settings: Arc<Settings>,
+    scrape_config: config::ScrapeConfig,
 ) -> tokio::task::JoinHandle<()> {
     let interval_hours = settings.sync_interval_hours;
 
@@ -64,7 +73,7 @@ pub fn start_scheduler(
         loop {
             ticker.tick().await;
             info!("Scheduler tick — triggering sync.");
-            run_sync_once(pool.clone(), state.clone(), settings.clone()).await;
+            run_sync_once(pool.clone(), state.clone(), settings.clone(), scrape_config.clone()).await;
         }
     })
 }

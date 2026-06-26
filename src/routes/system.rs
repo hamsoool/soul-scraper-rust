@@ -88,6 +88,7 @@ pub async fn trigger_sync(
         state.pool.clone(),
         state.sync_state.clone(),
         state.settings.clone(),
+        state.scrape_config.clone(),
     ));
 
     (

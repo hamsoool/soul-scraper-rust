@@ -1,9 +1,48 @@
 use std::env;
 
+use serde::{Deserialize, Serialize};
+use url::Url;
+
+/// A single scrape target sourced from `sources.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregatorConfig {
+    pub url: String,
+    pub category: String,
+    pub file_types: Vec<String>,
+}
+
+/// Top-level scrape configuration from `sources.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScrapeConfig {
+    pub target_url: String,
+    pub aggregators: Vec<AggregatorConfig>,
+}
+
+impl ScrapeConfig {
+    /// Collects all unique hostnames referenced in the config (target + all aggregator URLs).
+    pub fn extract_domains(&self) -> Vec<String> {
+        let mut domains: Vec<String> = Vec::new();
+        for url_str in Some(&self.target_url)
+            .into_iter()
+            .chain(self.aggregators.iter().map(|a| &a.url))
+        {
+            if let Ok(parsed) = Url::parse(url_str) {
+                if let Some(host) = parsed.host_str() {
+                    let host = host.to_lowercase();
+                    if !domains.contains(&host) {
+                        domains.push(host);
+                    }
+                }
+            }
+        }
+        domains
+    }
+}
+
 /// All application settings loaded from environment variables / `.env`.
 #[derive(Debug, Clone)]
 pub struct Settings {
-    /// PostgreSQL connection URL (standard `postgresql://...` or `postgres://...`)
+    /// PostgreSQL connection URL (standard `postgresql://...` or `postgres://`)
     pub database_url: String,
 
     /// Maximum PDF download size in bytes (default 10 MB)
@@ -23,6 +62,9 @@ pub struct Settings {
 
     /// Bind port (default 8000)
     pub port: u16,
+
+    /// Path to the JSON file listing scrape sources (default "sources.json")
+    pub sources_config_path: String,
 }
 
 impl Settings {
@@ -49,7 +91,16 @@ impl Settings {
             enable_scraper_scheduler: env_bool("ENABLE_SCRAPER_SCHEDULER", true),
             host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
             port: env_parse("PORT", 8000),
+            sources_config_path: env::var("SOURCES_CONFIG_PATH")
+                .unwrap_or_else(|_| "sources.json".to_string()),
         }
+    }
+
+    /// Reads and parses the `sources.json` file into a `ScrapeConfig`.
+    pub fn load_sources(&self) -> anyhow::Result<ScrapeConfig> {
+        let text = std::fs::read_to_string(&self.sources_config_path)?;
+        let config: ScrapeConfig = serde_json::from_str(&text)?;
+        Ok(config)
     }
 }
 

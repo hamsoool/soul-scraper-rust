@@ -20,8 +20,14 @@ async fn main() -> anyhow::Result<()> {
 
     let settings = Arc::new(config::Settings::from_env());
 
+    let scrape_config = settings
+        .load_sources()
+        .expect("Failed to load sources.json — check the file exists and is valid JSON");
+
     println!("==============================================================");
     println!("  Soul Scraper — Local Sync Session");
+    println!("  Target URL: {}", scrape_config.target_url);
+    println!("  Aggregators: {} configured", scrape_config.aggregators.len());
     println!("==============================================================");
 
     let pool = PgPoolOptions::new()
@@ -31,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    let result = scraper::sync_doe_data(&pool, &settings).await;
+    let result = scraper::sync_doe_data(&pool, &settings, &scrape_config).await;
 
     println!();
     println!("==============================================================");

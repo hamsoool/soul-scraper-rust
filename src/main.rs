@@ -15,6 +15,7 @@ use soul_scrape_rust::{
     db,
     routes::{documents, system},
     scheduler::{new_state, run_sync_once, start_scheduler},
+    security,
     AppState,
 };
 
@@ -38,6 +39,20 @@ async fn main() -> anyhow::Result<()> {
         settings.host, settings.port
     );
 
+    // Load scrape sources from sources.json
+    let scrape_config = settings
+        .load_sources()
+        .expect("Failed to load sources.json — check the file exists and is valid JSON");
+    info!(
+        "Loaded {} aggregator(s) targeting '{}'.",
+        scrape_config.aggregators.len(),
+        scrape_config.target_url
+    );
+
+    // Seed security allowlist from config domains
+    let domains = scrape_config.extract_domains();
+    security::init_allowed_domains(domains);
+
     // Build PostgreSQL connection pool
     let pool = PgPoolOptions::new()
         .max_connections(20)
@@ -56,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Start background scheduler if enabled
     if settings.enable_scraper_scheduler {
-        start_scheduler(pool.clone(), sync_state.clone(), settings.clone());
+        start_scheduler(pool.clone(), sync_state.clone(), settings.clone(), scrape_config.clone());
 
         if db::is_empty(&pool).await? {
             info!("Database is empty — triggering initial sync in background.");
@@ -64,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
                 pool.clone(),
                 sync_state.clone(),
                 settings.clone(),
+                scrape_config.clone(),
             ));
         }
     }
@@ -72,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
         pool,
         sync_state,
         settings: settings.clone(),
+        scrape_config,
     };
 
     let cors = CorsLayer::new()
@@ -88,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
                     "health": "/health",
                     "stats": "/stats",
                     "documents": "/documents",
+                    "categories": "/categories",
                     "latest": "/latest"
                 }
             }))
@@ -99,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
         // Document endpoints
         .route("/documents", get(documents::list_documents))
         .route("/documents/:id", get(documents::get_document))
+        .route("/categories", get(documents::get_categories))
         .route("/latest", get(documents::get_latest))
         .with_state(state)
         .layer(cors)

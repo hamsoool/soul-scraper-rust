@@ -12,31 +12,15 @@ use sqlx::PgPool;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    config::Settings,
+    config::{self, Settings},
     db::{self, NewDocument},
     error::{AppError, Result},
     security::validate_url,
 };
 
 // ---------------------------------------------------------------------------
-// Target sources
+// Target sources — now loaded dynamically from sources.json config
 // ---------------------------------------------------------------------------
-
-pub struct Source {
-    pub url: &'static str,
-    pub category: &'static str,
-}
-
-pub const SOURCES: &[Source] = &[
-    Source {
-        url: "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=Price%20Adjustments&display_type=Card",
-        category: "Price Adjustments",
-    },
-    Source {
-        url: "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=North%20Luzon%20Pump%20Prices&display_type=Card",
-        category: "North Luzon Pump Prices",
-    },
-];
 
 // ---------------------------------------------------------------------------
 // Static compiled regexes
@@ -474,12 +458,13 @@ pub struct ScrapedRecord {
     pub published_date: DateTime<Utc>,
 }
 
-/// Scrapes a DOE page and returns extracted PDF document metadata.
-/// Mirrors `scrape_source_page` in scraper.py.
+/// Scrapes a source page and returns extracted file metadata.
 pub async fn scrape_source_page(
     client: &Client,
     source_url: &str,
     category: &str,
+    target_url: &str,
+    file_types: &[String],
     _settings: &Settings,
 
 ) -> Result<Vec<ScrapedRecord>> {
@@ -567,7 +552,7 @@ pub async fn scrape_source_page(
     let mut records: Vec<ScrapedRecord> = Vec::new();
     let now = Utc::now();
     let two_weeks_ago = now - Duration::days(14);
-    let cms_base = "https://prod-cms.doe.gov.ph";
+    let target_base = target_url.trim_end_matches('/');
 
     let a_sel = Selector::parse("a").unwrap();
 
@@ -644,7 +629,7 @@ pub async fn scrape_source_page(
         let source_article_url = if slug.is_empty() {
             source_url.to_string()
         } else {
-            format!("https://doe.gov.ph/articles/{slug}")
+            format!("{target_base}/articles/{slug}")
         };
 
         for link in art_doc.select(&a_sel) {
@@ -653,60 +638,43 @@ pub async fn scrape_source_page(
                 None => continue,
             };
 
-            if !href.contains("/documents/") || !href.contains("guest") {
+            // Filter by file extension
+            let href_lower = href.to_lowercase();
+            let has_matching_extension = file_types.iter().any(|ext| {
+                href_lower.ends_with(&format!(".{ext}")) || href_lower.contains(&format!(".{ext}?"))
+            });
+            if !has_matching_extension {
                 continue;
             }
 
-            let pdf_url = if href.starts_with("http") {
+            let file_url = if href.starts_with("http") {
                 href.to_string()
+            } else if href.starts_with('/') {
+                format!("{target_base}{href}")
             } else {
-                format!("{cms_base}{href}")
+                format!("{target_base}/{href}")
             };
 
             let link_text = link.text().collect::<String>().trim().to_string();
 
-            let doc_title = if category == "Price Adjustments" {
-                if link_text.len() > 10 {
-                    link_text.clone()
-                } else {
-                    title.clone()
-                }
+            let doc_title = if link_text.len() > 10 {
+                link_text.clone()
             } else {
-                format!("{title} - {link_text}")
+                title.clone()
             };
 
-            // Date filtering
-            let published_dt = if category == "Price Adjustments" {
-                let dt = parse_date_from_text(&link_text, Some(fallback_dt));
-                if dt < two_weeks_ago {
-                    info!("Filtering out '{}' published at {} (older than 2 weeks)", doc_title, dt.date_naive());
-                    continue;
-                }
-                dt
-            } else {
-                // North Luzon: use URL date
-                let url_date = match parse_date_from_pdf_url(&pdf_url) {
-                    Some(d) => d,
-                    None => {
-                        info!("Skipping '{}': cannot parse date from URL '{}'", doc_title, pdf_url);
-                        continue;
-                    }
-                };
-                if url_date.year() != now.year() || url_date.month() != now.month() {
-                    info!(
-                        "Filtering out '{}' — PDF date {} is not in {}-{:02}",
-                        doc_title, url_date.date_naive(), now.year(), now.month()
-                    );
-                    continue;
-                }
-                url_date
-            };
+            // Date filtering — scrape from link text, fall back to article date
+            let published_dt = parse_date_from_text(&link_text, Some(fallback_dt));
+            if published_dt < two_weeks_ago {
+                info!("Filtering out '{}' published at {} (older than 2 weeks)", doc_title, published_dt.date_naive());
+                continue;
+            }
 
             records.push(ScrapedRecord {
                 source_category: category.to_string(),
                 title: doc_title,
                 source_url: source_article_url.clone(),
-                pdf_url,
+                pdf_url: file_url,
                 published_date: published_dt,
             });
         }
@@ -729,11 +697,11 @@ pub struct SyncResult {
     pub cleanup_duplicates: u64,
 }
 
-/// Full sync: scrape both sources, download new PDFs in parallel, save to DB.
+/// Full sync: scrape all configured sources, download new files in parallel, save to DB.
 /// This is the Rust equivalent of `sync_doe_data` in scraper.py — with the
 /// key upgrade that all PDF downloads are executed concurrently via
 /// `FuturesUnordered` instead of sequentially.
-pub async fn sync_doe_data(pool: &PgPool, settings: &Settings) -> SyncResult {
+pub async fn sync_doe_data(pool: &PgPool, settings: &Settings, config: &config::ScrapeConfig) -> SyncResult {
     info!("Starting sync_doe_data execution…");
     let start = std::time::Instant::now();
     let mut errors: Vec<String> = Vec::new();
@@ -755,16 +723,23 @@ pub async fn sync_doe_data(pool: &PgPool, settings: &Settings) -> SyncResult {
         .build()
         .expect("Failed to build HTTP client");
 
-    // Step 1 & 2: Scrape all source pages
+    // Step 1 & 2: Scrape all configured source pages
     let mut all_records: Vec<ScrapedRecord> = Vec::new();
-    for source in SOURCES {
-        match scrape_source_page(&client, source.url, source.category, settings).await {
+    for agg in &config.aggregators {
+        match scrape_source_page(
+            &client,
+            &agg.url,
+            &agg.category,
+            &config.target_url,
+            &agg.file_types,
+            settings,
+        ).await {
             Ok(recs) => {
-                info!("Extracted {} document links from '{}'", recs.len(), source.category);
+                info!("Extracted {} document links from '{}'", recs.len(), agg.category);
                 all_records.extend(recs);
             }
             Err(e) => {
-                let msg = format!("Failed to scrape '{}': {}", source.category, e);
+                let msg = format!("Failed to scrape '{}': {}", agg.category, e);
                 error!("{}", msg);
                 errors.push(msg);
             }
@@ -796,30 +771,36 @@ pub async fn sync_doe_data(pool: &PgPool, settings: &Settings) -> SyncResult {
         }
     }
 
-    info!("{} new PDFs to download and process", new_records.len());
+    info!("{} new files to download and process", new_records.len());
 
-    // Step 4 & 5: Download + extract PDF text CONCURRENTLY
+    // Step 4 & 5: Download + extract text CONCURRENTLY
     // Each new record gets its own tokio task; we collect them with FuturesUnordered
     // for maximum throughput without waiting on a sequential loop.
     let max_bytes = settings.max_pdf_size_bytes;
 
-    type TaskResult = std::result::Result<(ScrapedRecord, String), (String, String)>;
+    type TaskResult = std::result::Result<(ScrapedRecord, Option<String>), (String, String)>;
 
     let mut futures = FuturesUnordered::new();
 
     for record in new_records {
         let client_clone = client.clone();
         let url = record.pdf_url.clone();
+        let is_pdf = url.to_lowercase().ends_with(".pdf");
 
         futures.push(tokio::spawn(async move {
-            info!("Downloading PDF: {}", url);
+            info!("Downloading file: {}", url);
             let bytes = match download_pdf_stream(&client_clone, &url, max_bytes).await {
                 Ok(b) => b,
                 Err(e) => {
                     return TaskResult::Err((url, format!("Download failed: {e}")));
                 }
             };
-            let text = extract_pdf_text(bytes).await;
+            let text = if is_pdf {
+                let t = extract_pdf_text(bytes).await;
+                if t.is_empty() { None } else { Some(t) }
+            } else {
+                None
+            };
             TaskResult::Ok((record, text))
         }));
     }
@@ -842,7 +823,7 @@ pub async fn sync_doe_data(pool: &PgPool, settings: &Settings) -> SyncResult {
                     title: record.title,
                     source_url: record.source_url,
                     pdf_url: record.pdf_url.clone(),
-                    content: if text.is_empty() { None } else { Some(text) },
+                    content: text,
                     published_date: Some(record.published_date),
                 };
 
@@ -891,6 +872,14 @@ pub async fn sync_doe_data(pool: &PgPool, settings: &Settings) -> SyncResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn init_security() {
+        crate::security::init_allowed_domains(vec![
+            "doe.gov.ph".to_string(),
+            "www.doe.gov.ph".to_string(),
+            "prod-cms.doe.gov.ph".to_string(),
+        ]);
+    }
 
     // ---- parse_date_from_text -----------------------------------------------
 
@@ -966,18 +955,21 @@ mod tests {
 
     #[test]
     fn test_validate_http_scheme_rejected() {
+        init_security();
         let result = crate::security::validate_url("http://doe.gov.ph/foo");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_blocked_domain() {
+        init_security();
         let result = crate::security::validate_url("https://evil.com/malware.pdf");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_empty_url() {
+        init_security();
         let result = crate::security::validate_url("");
         assert!(result.is_err());
     }

@@ -4,7 +4,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::{db, error::Result, AppState};
+use crate::{config, db, error::Result, AppState};
 
 /// Query parameters for `GET /documents`.
 #[derive(Debug, Deserialize)]
@@ -51,4 +51,11 @@ pub async fn get_latest(
 ) -> Result<Json<Vec<db::DocumentListItem>>> {
     let docs = db::get_latest_per_category(&state.pool).await?;
     Ok(Json(docs))
+}
+
+/// `GET /categories` — returns the full scrape configuration (target URL + aggregators).
+pub async fn get_categories(
+    State(state): State<AppState>,
+) -> Json<config::ScrapeConfig> {
+    Json(state.scrape_config)
 }

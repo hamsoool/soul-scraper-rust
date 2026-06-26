@@ -1,0 +1,15 @@
+{
+  "target_url": "https://example.gov.ph",
+  "aggregators": [
+    {
+      "url": "https://example.gov.ph/articles/category-1",
+      "category": "Category 1",
+      "file_types": ["pdf"]
+    },
+    {
+      "url": "https://example.gov.ph/articles/category-2",
+      "category": "Category 2",
+      "file_types": ["pdf", "jpg", "png"]
+    }
+  ]
+}

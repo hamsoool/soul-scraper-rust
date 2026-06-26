@@ -1,0 +1,15 @@
+{
+  "target_url": "https://doe.gov.ph",
+  "aggregators": [
+    {
+      "url": "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=Price%20Adjustments&display_type=Card",
+      "category": "Price Adjustments",
+      "file_types": ["pdf"]
+    },
+    {
+      "url": "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=North%20Luzon%20Pump%20Prices&display_type=Card",
+      "category": "North Luzon Pump Prices",
+      "file_types": ["pdf"]
+    }
+  ]
+}

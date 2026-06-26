@@ -8,27 +8,21 @@ Built with **Rust/Axum** for extreme throughput — all file downloads run concu
 
 ## Configuration (`sources.json`)
 
-All scrape targets are defined in a single JSON file at the project root. Copy the example to get started:
-
-```bash
-cp sources.example.json sources.json
-```
-
-Then edit `sources.json` to point at your target:
+All scrape targets are defined in a single JSON file at the project root. It ships with a default config for the DOE Philippines fuel price bulletins:
 
 ```json
 {
-  "target_url": "https://example.gov.ph",
+  "target_url": "https://doe.gov.ph",
   "aggregators": [
     {
-      "url": "https://example.gov.ph/articles/category-1",
-      "category": "Category 1",
+      "url": "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=Price%20Adjustments&display_type=Card",
+      "category": "Price Adjustments",
       "file_types": ["pdf"]
     },
     {
-      "url": "https://example.gov.ph/articles/category-2",
-      "category": "Category 2",
-      "file_types": ["pdf", "jpg", "png"]
+      "url": "https://doe.gov.ph/articles/group/liquid-fuels?maincat=Retail%20Pump%20Prices&subcategory=North%20Luzon%20Pump%20Prices&display_type=Card",
+      "category": "North Luzon Pump Prices",
+      "file_types": ["pdf"]
     }
   ]
 }
@@ -41,7 +35,7 @@ Then edit `sources.json` to point at your target:
 | `aggregators[].category` | Label assigned to files found on this page |
 | `aggregators[].file_types` | File extensions to look for (e.g. `pdf`, `jpg`, `png`, `xlsx`) |
 
-> `sources.json` is git-ignored — each machine has its own config. Use `sources.example.json` as a reference.
+Edit `sources.json` to point at your own target website, add categories, or change file types.
 
 Set a custom path with the `SOURCES_CONFIG_PATH` env var (default: `sources.json`).
 

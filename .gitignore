@@ -180,5 +180,5 @@ Thumbs.db
 # Windows PDFium binary dependency
 /pdfium.dll
 
-# Per-machine scrape configuration
-/sources.json
+# Per-machine scrape configuration (example only — actual sources.json is tracked)
+/sources.example.json

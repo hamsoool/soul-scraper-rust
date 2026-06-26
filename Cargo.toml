@@ -71,7 +71,7 @@ anyhow = "1"
 
 # OpenAPI / Swagger UI
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
-utoipa-swagger-ui = { version = "8", features = ["axum"] }
+utoipa-swagger-ui = { version = "8", features = ["axum", "reqwest"] }
 
 # URL parsing
 url = "2"

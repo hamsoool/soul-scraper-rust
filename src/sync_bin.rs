@@ -7,7 +7,7 @@ use std::sync::Arc;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use soul_scrape_rust::{config, scraper};
+use soul_scrape_rust::{config, scraper, security};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -23,6 +23,8 @@ async fn main() -> anyhow::Result<()> {
     let scrape_config = settings
         .load_sources()
         .expect("Failed to load sources.json — check the file exists and is valid JSON");
+
+    security::init_allowed_domains(scrape_config.extract_domains());
 
     println!("==============================================================");
     println!("  Soul Scraper — Local Sync Session");

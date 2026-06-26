@@ -10,6 +10,13 @@ pub struct AggregatorConfig {
     pub url: String,
     pub category: String,
     pub file_types: Vec<String>,
+    /// Scraping strategy: "nuxt" (Nuxt.js SSR state) or "html" (generic link extraction)
+    #[serde(default = "default_scraper_type")]
+    pub scraper_type: String,
+}
+
+fn default_scraper_type() -> String {
+    "nuxt".to_string()
 }
 
 /// Top-level scrape configuration from `sources.json`.

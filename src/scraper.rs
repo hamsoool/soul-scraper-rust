@@ -458,6 +458,77 @@ pub struct ScrapedRecord {
     pub published_date: DateTime<Utc>,
 }
 
+/// Generic HTML scraper — finds all `<a>` links matching configured file types.
+pub async fn scrape_html_page(
+    client: &Client,
+    source_url: &str,
+    category: &str,
+    target_url: &str,
+    file_types: &[String],
+) -> Result<Vec<ScrapedRecord>> {
+    validate_url(source_url).map_err(|e| {
+        error!("Security blocked source URL {}: {}", source_url, e);
+        e
+    })?;
+
+    info!("Fetching (HTML mode): {}", source_url);
+
+    let response = fetch_with_backoff(client, source_url).await?;
+    let html_text = response.text().await.map_err(AppError::Http)?;
+    let document = Html::parse_document(&html_text);
+    let a_sel = Selector::parse("a").unwrap();
+    let target_base = target_url.trim_end_matches('/');
+    let now = Utc::now();
+
+    let mut records: Vec<ScrapedRecord> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for link in document.select(&a_sel) {
+        let href = match link.value().attr("href") {
+            Some(h) => h,
+            None => continue,
+        };
+
+        let href_lower = href.to_lowercase();
+        let has_matching_extension = file_types.iter().any(|ext| {
+            href_lower.ends_with(&format!(".{ext}")) || href_lower.contains(&format!(".{ext}?"))
+        });
+        if !has_matching_extension {
+            continue;
+        }
+
+        let file_url = if href.starts_with("http") {
+            href.to_string()
+        } else if href.starts_with('/') {
+            format!("{target_base}{href}")
+        } else {
+            format!("{target_base}/{href}")
+        };
+
+        if !seen.insert(file_url.clone()) {
+            continue;
+        }
+
+        let link_text = link.text().collect::<String>().trim().to_string();
+        let title = if link_text.is_empty() {
+            file_url.rsplit('/').next().unwrap_or(&file_url).to_string()
+        } else {
+            link_text
+        };
+
+        records.push(ScrapedRecord {
+            source_category: category.to_string(),
+            title,
+            source_url: source_url.to_string(),
+            pdf_url: file_url,
+            published_date: now,
+        });
+    }
+
+    info!("Extracted {} file link(s) from '{}'", records.len(), category);
+    Ok(records)
+}
+
 /// Scrapes a source page and returns extracted file metadata.
 pub async fn scrape_source_page(
     client: &Client,
@@ -598,16 +669,16 @@ pub async fn scrape_source_page(
 
         // Extract and resolve content HTML
         static RE_CONTENT: Lazy<Regex> =
-            Lazy::new(|| Regex::new(r#"content:("(?:[^"\\]|\\.)*")"#).unwrap());
-        let content_html_raw = match RE_CONTENT.captures(segment).and_then(|c| c.get(1)) {
-            Some(m) => m.as_str(),
-            None => continue,
-        };
-
-        let content_html = match serde_json::from_str::<Value>(content_html_raw) {
-            Ok(Value::String(s)) => unescape_js(&s),
-            _ => unescape_js(content_html_raw.trim_matches('"')),
-        };
+            Lazy::new(|| Regex::new(r"content:([^,\|\}]+)").unwrap());
+        let content_var = RE_CONTENT
+            .captures(segment)
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().trim())
+            .unwrap_or("");
+        if content_var.is_empty() {
+            continue;
+        }
+        let content_html = resolve_str(content_var, &state.mapping);
 
         if content_html.is_empty() {
             continue;
@@ -726,14 +797,24 @@ pub async fn sync_doe_data(pool: &PgPool, settings: &Settings, config: &config::
     // Step 1 & 2: Scrape all configured source pages
     let mut all_records: Vec<ScrapedRecord> = Vec::new();
     for agg in &config.aggregators {
-        match scrape_source_page(
-            &client,
-            &agg.url,
-            &agg.category,
-            &config.target_url,
-            &agg.file_types,
-            settings,
-        ).await {
+        let recs = match agg.scraper_type.as_str() {
+            "html" => scrape_html_page(
+                &client,
+                &agg.url,
+                &agg.category,
+                &config.target_url,
+                &agg.file_types,
+            ).await,
+            _ => scrape_source_page(
+                &client,
+                &agg.url,
+                &agg.category,
+                &config.target_url,
+                &agg.file_types,
+                settings,
+            ).await,
+        };
+        match recs {
             Ok(recs) => {
                 info!("Extracted {} document links from '{}'", recs.len(), agg.category);
                 all_records.extend(recs);

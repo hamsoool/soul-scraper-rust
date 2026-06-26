@@ -43,8 +43,9 @@ WORKDIR /app
 COPY --from=builder /app/target/release/soul-scrape-rust /usr/local/bin/soul-scrape-rust
 COPY --from=builder /app/target/release/sync /usr/local/bin/sync
 
-# Copy migrations (SQLx runs them at startup)
+# Copy migrations (SQLx runs them at startup) and sources config
 COPY migrations/ migrations/
+COPY sources.json ./
 
 # Download and extract PDFium library directly into /usr/local/lib/
 RUN mkdir -p /tmp/pdfium && \

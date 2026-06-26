@@ -1,5 +1,4 @@
 use std::env;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -135,12 +134,10 @@ fn env_bool(key: &str, default: bool) -> bool {
     }
 }
 
-/// Generates a unique API key based on the current timestamp.
+/// Generates a cryptographically random 256-bit API key.
 fn generate_api_key() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let pid = std::process::id();
-    format!("sk-{:016x}{:08x}", nanos as u128, pid)
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).expect("failed to generate random API key");
+    let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    format!("sk-{}", hex)
 }

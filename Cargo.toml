@@ -76,6 +76,9 @@ utoipa-swagger-ui = { version = "8", features = ["axum", "reqwest"] }
 # URL parsing
 url = "2"
 
+# Cryptographically secure random bytes (for API key generation)
+getrandom = "0.2"
+
 # (DNS done via std::net::ToSocketAddrs — no extra dep needed)
 
 # Concurrent futures

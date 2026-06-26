@@ -2,6 +2,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::json;
+use utoipa::ToSchema;
 
 use crate::{
     db,
@@ -11,6 +12,14 @@ use crate::{
 };
 
 /// `GET /health`
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "system",
+    responses(
+        (status = 200, description = "Service is healthy")
+    )
+)]
 pub async fn health() -> Json<serde_json::Value> {
     Json(json!({
         "status": "ok",
@@ -19,7 +28,7 @@ pub async fn health() -> Json<serde_json::Value> {
 }
 
 /// Response body for `GET /stats`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct StatsResponse {
     pub total_documents: i64,
     pub documents_by_category: std::collections::HashMap<String, i64>,
@@ -28,6 +37,14 @@ pub struct StatsResponse {
 }
 
 /// `GET /stats`
+#[utoipa::path(
+    get,
+    path = "/stats",
+    tag = "system",
+    responses(
+        (status = 200, description = "Database statistics and scraper status", body = StatsResponse)
+    )
+)]
 pub async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsResponse>> {
     let (total, by_cat) = db::get_counts(&state.pool).await?;
 
@@ -55,7 +72,7 @@ pub async fn get_stats(State(state): State<AppState>) -> Result<Json<StatsRespon
 }
 
 /// Response body for `POST /sync`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SyncResponse {
     pub status: String,
     pub message: String,
@@ -64,6 +81,15 @@ pub struct SyncResponse {
 }
 
 /// `POST /sync` — triggers manual scrape in the background (202 Accepted).
+#[utoipa::path(
+    post,
+    path = "/sync",
+    tag = "system",
+    responses(
+        (status = 202, description = "Sync accepted and running in background", body = SyncResponse),
+        (status = 202, description = "Sync already in progress", body = SyncResponse)
+    )
+)]
 pub async fn trigger_sync(
     State(state): State<AppState>,
 ) -> (StatusCode, Json<SyncResponse>) {

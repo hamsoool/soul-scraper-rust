@@ -1,11 +1,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
+use utoipa::ToSchema;
 
 use crate::error::{AppError, Result};
 
 /// Database model for a scraped document. Maps 1:1 to the `documents` table.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Document {
     pub id: i32,
     pub source_category: String,
@@ -19,7 +20,7 @@ pub struct Document {
 }
 
 /// Lightweight version for list endpoints (no content field).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DocumentListItem {
     pub id: i32,
     pub source_category: String,

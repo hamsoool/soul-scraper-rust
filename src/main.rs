@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
+    middleware,
     routing::{get, post},
     Router,
 };
@@ -9,15 +10,65 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
+use utoipa::{Modify, OpenApi};
+use utoipa_swagger_ui::SwaggerUi;
 
 use soul_scrape_rust::{
-    config::Settings,
+    auth,
+    config::{self, Settings},
     db,
     routes::{documents, system},
     scheduler::{new_state, run_sync_once, start_scheduler},
     security,
     AppState,
 };
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        system::health,
+        system::get_stats,
+        system::trigger_sync,
+        documents::list_documents,
+        documents::get_document,
+        documents::get_latest,
+        documents::get_categories,
+    ),
+    components(
+        schemas(
+            db::Document,
+            db::DocumentListItem,
+            config::ScrapeConfig,
+            config::AggregatorConfig,
+            system::StatsResponse,
+            system::SyncResponse,
+            documents::ListParams,
+        )
+    ),
+    modifiers(&SecurityAddon),
+    tags(
+        (name = "system", description = "System endpoints (health, stats, sync trigger)"),
+        (name = "documents", description = "Document and category endpoints"),
+    )
+)]
+struct ApiDoc;
+
+struct SecurityAddon;
+
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "api_key",
+                SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-API-Key"))),
+            )
+        }
+        let requirement: utoipa::openapi::security::SecurityRequirement =
+            utoipa::openapi::security::SecurityRequirement::new("api_key", Vec::<String>::new());
+        openapi.security = Some(vec![requirement]);
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -34,6 +85,11 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let settings = Arc::new(Settings::from_env());
+    if settings.api_key_auto_generated {
+        info!("API key auto-generated (set API_KEY in .env to use your own): {}", settings.api_key);
+    } else {
+        info!("API key loaded from environment.");
+    }
     info!(
         "Soul Scraper Rust starting on {}:{}",
         settings.host, settings.port
@@ -97,6 +153,7 @@ async fn main() -> anyhow::Result<()> {
         .allow_headers(Any);
 
     let app = Router::new()
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         // Welcome/Index
         .route("/", get(|| async {
             axum::Json(serde_json::json!({
@@ -119,7 +176,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/documents/:id", get(documents::get_document))
         .route("/categories", get(documents::get_categories))
         .route("/latest", get(documents::get_latest))
-        .with_state(state)
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            state,
+            auth::require_api_key,
+        ))
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 

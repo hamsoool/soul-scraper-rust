@@ -69,6 +69,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 thiserror = "1"
 anyhow = "1"
 
+# OpenAPI / Swagger UI
+utoipa = { version = "5", features = ["axum_extras", "chrono"] }
+utoipa-swagger-ui = { version = "8", features = ["axum"] }
+
 # URL parsing
 url = "2"
 

@@ -1,10 +1,12 @@
 use std::env;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use url::Url;
+use utoipa::ToSchema;
 
 /// A single scrape target sourced from `sources.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AggregatorConfig {
     pub url: String,
     pub category: String,
@@ -12,7 +14,7 @@ pub struct AggregatorConfig {
 }
 
 /// Top-level scrape configuration from `sources.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ScrapeConfig {
     pub target_url: String,
     pub aggregators: Vec<AggregatorConfig>,
@@ -65,6 +67,11 @@ pub struct Settings {
 
     /// Path to the JSON file listing scrape sources (default "sources.json")
     pub sources_config_path: String,
+
+    /// API key for protecting endpoints (auto-generated if not provided via env)
+    pub api_key: String,
+    /// Whether the API key was auto-generated (true) or user-provided (false)
+    pub api_key_auto_generated: bool,
 }
 
 impl Settings {
@@ -83,7 +90,7 @@ impl Settings {
             database_url
         };
 
-        Settings {
+        let mut settings = Settings {
             database_url,
             max_pdf_size_bytes: env_parse("MAX_PDF_SIZE_BYTES", 10 * 1024 * 1024),
             http_timeout_seconds: env_parse("HTTP_TIMEOUT_SECONDS", 30),
@@ -93,7 +100,16 @@ impl Settings {
             port: env_parse("PORT", 8000),
             sources_config_path: env::var("SOURCES_CONFIG_PATH")
                 .unwrap_or_else(|_| "sources.json".to_string()),
+            api_key: env::var("API_KEY").unwrap_or_default(),
+            api_key_auto_generated: false,
+        };
+
+        if settings.api_key.is_empty() {
+            settings.api_key = generate_api_key();
+            settings.api_key_auto_generated = true;
         }
+
+        settings
     }
 
     /// Reads and parses the `sources.json` file into a `ScrapeConfig`.
@@ -117,4 +133,14 @@ fn env_bool(key: &str, default: bool) -> bool {
         Ok("false") | Ok("0") | Ok("no") => false,
         _ => default,
     }
+}
+
+/// Generates a unique API key based on the current timestamp.
+fn generate_api_key() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let pid = std::process::id();
+    format!("sk-{:016x}{:08x}", nanos as u128, pid)
 }
